@@ -1,0 +1,9 @@
+8
+node1 sp23-cs425-6101.cs.illinois.edu 1234
+node2 sp23-cs425-6102.cs.illinois.edu 1234
+node3 sp23-cs425-6103.cs.illinois.edu 1234
+node4 sp23-cs425-6104.cs.illinois.edu 1234
+node5 sp23-cs425-6105.cs.illinois.edu 1234
+node6 sp23-cs425-6106.cs.illinois.edu 1234
+node7 sp23-cs425-6107.cs.illinois.edu 1234
+node8 sp23-cs425-6108.cs.illinois.edu 1234
