@@ -384,9 +384,10 @@ func rDeliver(m Message) {
 		}
 
 		mu_pq.Unlock()
-
 		defer rMulticast(tx)
+		return
 	}
+	mu_pq.Unlock()
 }
 
 func main()  {
