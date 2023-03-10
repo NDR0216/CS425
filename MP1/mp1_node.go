@@ -26,8 +26,8 @@ type TX struct {
 	Priority float64
     Text string
 	Deliverable bool
-	Discarded bool
-	Need_p_count int
+	// Discarded bool
+	// Need_p_count int
 }
 
 type Message struct {
@@ -61,18 +61,19 @@ func (pq *PriorityQueue) Pop() any {
 
 const ARG_NUM int = 2
 
+var n int // num of nodes in the cluster
 var id string // current node
 var group []*gob.Encoder
-var n int // num of nodes in the cluster
 
 var mu_seq_num sync.Mutex
 var seq_num int // num of messages current node has sent
 var mu_received sync.Mutex
-var received map[ID]TX
-var delivered map[ID]TX
+var received map[ID]TX // msg received, m.ID: m.TX
+var delivered map[ID]bool // tx delivered, tx.ID: bool 
 var mu_pq sync.Mutex
 var pq PriorityQueue
 var max float64 // current max priority
+
 var p_map map[int][]float64 // priority map
 var p_map_id map[int][]string
 
@@ -168,35 +169,34 @@ func handle_dead(dead_idx int) {
 
 	mu_pq.Lock()
 
-	i := 0
-	// fmt.Println("handle dead start")
-	for pq.Len() > 0 && i < pq.Len() {
-		if pq[i].Deliverable == false {
+	for i := 0; pq.Len() > 0 && i < pq.Len(); i++ {
+		if pq[i].Deliverable == false { // delete tx that final priority will never arrived
 			if pq[i].Tx_id.Node_id == dead_node_id {
 				heap.Remove(&pq, i)
 				i--
-			} else if pq[i].Tx_id.Node_id == id {
-				has_dead_id := false
-				for _, id := range p_map_id[pq[i].Tx_id.Num] {
-					if id == dead_node_id {
-						has_dead_id = true
+			} else if pq[i].Tx_id.Node_id == id { // self initiated transaction
+				for j, v := range p_map_id[pq[i].Tx_id.Num] {
+					if v == dead_node_id {
+						// delete a[j]
+						a := p_map[pq[i].Tx_id.Num]
+
+						a[j] = a[len(a)-1]
+						p_map[pq[i].Tx_id.Num] = a[:len(a)-1]
+
+						// delete b[j]
+						b := p_map_id[pq[i].Tx_id.Num]
+
+						b[j] = b[len(b)-1]
+						p_map_id[pq[i].Tx_id.Num] = b[:len(b)-1]
+
 						break
 					}
 				}
-				if !has_dead_id {
-					// fmt.Println("waiting for dead priority")
-					defer rMulticast(TX{pq[i].Tx_id, pq[i].Priority, pq[i].Text, pq[i].Deliverable, true, pq[i].Need_p_count})
-					// fmt.Println("Remove:")
-					// fmt.Println(heap.Remove(&pq, i))
-					heap.Remove(&pq, i)
-					i--
-				}
 			}
 		}
-		i++
 	}
+	
 	mu_pq.Unlock()
-	// fmt.Println("handle dead done")
 }
 
 func handle_err(err error) {
@@ -225,7 +225,7 @@ func handle_transaction(id string) {
 
 		
 
-		tx := TX{ID{id, tx_num}, priority, text[:len(text)-1], false, false, n}
+		tx := TX{ID{id, tx_num}, priority, text[:len(text)-1], false}
 
 		go logger(tx)
 		
@@ -319,9 +319,9 @@ func rDeliver(m Message) {
 				p_map[pq[i].Tx_id.Num] = append(p_map[pq[i].Tx_id.Num], m.Tx.Priority)
 				p_map_id[pq[i].Tx_id.Num] = append(p_map_id[pq[i].Tx_id.Num], m.Message_id.Node_id)
 
-				if len(p_map[pq[i].Tx_id.Num]) == pq[i].Need_p_count { // when get all proposed priorities
+				if len(p_map[pq[i].Tx_id.Num]) >= n { // when get all proposed priorities
 					// fmt.Println("get all proposed")
-					pqi := TX{pq[i].Tx_id, max_priority(pq[i].Tx_id.Num), pq[i].Text, true, false, pq[i].Need_p_count}
+					pqi := TX{pq[i].Tx_id, max_priority(pq[i].Tx_id.Num), pq[i].Text, true}
 
 					pq[i] = &pqi
 					heap.Fix(&pq, i)
@@ -330,7 +330,7 @@ func rDeliver(m Message) {
 
 					for pq.Len() > 0 && pq[0].Deliverable == true {
 						tmp := *heap.Pop(&pq).(*TX)
-						delivered[tmp.Tx_id] = tmp
+						delivered[tmp.Tx_id] = true
 						balance(tmp)
 					}
 					
@@ -338,23 +338,18 @@ func rDeliver(m Message) {
 
 				mu_pq.Unlock()
 				return
-			} else if pq[i].Tx_id.Node_id != id && pq[i].Tx_id.Node_id == m.Message_id.Node_id && m.Tx.Discarded == false { // not initiated, in queue => get final priority
+			} else if pq[i].Tx_id.Node_id != id && pq[i].Tx_id.Node_id == m.Message_id.Node_id { // not initiated, in queue => get final priority
 				// fmt.Println("get final")
-				pq[i] = &TX{pq[i].Tx_id, m.Tx.Priority, pq[i].Text, true, false, pq[i].Need_p_count}
+				pq[i] = &TX{pq[i].Tx_id, m.Tx.Priority, pq[i].Text, true}
 				
 				heap.Fix(&pq, i)
 
 				for pq.Len() > 0 && pq[0].Deliverable == true {
 					tmp := *heap.Pop(&pq).(*TX)
-					delivered[tmp.Tx_id] = tmp
+					delivered[tmp.Tx_id] = true
 					balance(tmp)
 				}
 
-				mu_pq.Unlock()
-				return
-			} else if pq[i].Tx_id.Node_id != id && pq[i].Tx_id.Node_id == m.Message_id.Node_id && m.Tx.Discarded == true { // received a discarded transaction => remove from pq
-				// fmt.Println("remove dead transaction")
-				heap.Remove(&pq, i)
 				mu_pq.Unlock()
 				return
 			} else { // first multicast, self-deliver just after generating a tx
@@ -379,17 +374,19 @@ func rDeliver(m Message) {
 	}
 
 	// not intiated, not in queue => send proposed priority
-	integer, _ := math.Modf(max)
-	tx.Priority = integer + 1 + s*0.1
+	if m.Tx.Tx_id.Node_id == m.Message_id.Node_id {
+		integer, _ := math.Modf(max)
+		tx.Priority = integer + 1 + s*0.1
 
-	heap.Push(&pq, &tx)
-	if max < tx.Priority {
-		max = tx.Priority
+		heap.Push(&pq, &tx)
+		if max < tx.Priority {
+			max = tx.Priority
+		}
+
+		mu_pq.Unlock()
+
+		defer rMulticast(tx)
 	}
-
-	mu_pq.Unlock()
-
-	defer rMulticast(tx)
 }
 
 func main()  {
@@ -400,7 +397,7 @@ func main()  {
 	}
 
 	received = make(map[ID]TX)
-	delivered = make(map[ID]TX)
+	delivered = make(map[ID]bool)
 	p_map = make(map[int][]float64)
 	p_map_id = make(map[int][]string)
 	balance_map = make(map[string]int)
