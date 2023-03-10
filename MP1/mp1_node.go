@@ -374,7 +374,7 @@ func rDeliver(m Message) {
 	}
 
 	// not intiated, not in queue => send proposed priority
-	// if m.Tx.Tx_id.Node_id == m.Message_id.Node_id {
+	if m.Tx.Tx_id.Node_id == m.Message_id.Node_id {
 		integer, _ := math.Modf(max)
 		tx.Priority = integer + 1 + s*0.1
 
@@ -386,7 +386,7 @@ func rDeliver(m Message) {
 		mu_pq.Unlock()
 
 		defer rMulticast(tx)
-	// }
+	}
 }
 
 func main()  {
