@@ -58,7 +58,7 @@ type Raft struct {
 	commitIndex int        // index of highest log entry known to be committed (initialized to 0, increases monotonically)
 	// lastApplied
 	nextIndex []int // for each server, index of the next log entry to send to that server (initialized to leader lastlogindex + 1)
-	// matchIndex
+	// matchIndex []int
 
 	isleader bool
 	stepDown bool
@@ -100,26 +100,6 @@ type RequestVoteReply struct {
 	// Your data here (2A).
 	Term        int  // currentTerm, for candidate to update itself
 	VoteGranted bool // true means candidate received vote
-}
-
-func checkUpToDate(candidateTerm int, candidateIndex int, candidateID int, rxTerm int, rxIndex int, rxID int) bool {
-	if candidateTerm > rxTerm {
-		return true
-	} else if candidateTerm == rxTerm {
-		if candidateIndex > rxIndex {
-			return true
-		} else if candidateIndex == rxIndex {
-			if candidateID > rxID {
-				return true
-			} else {
-				return false
-			}
-		} else {
-			return false
-		}
-	} else {
-		return false
-	}
 }
 
 // example RequestVote RPC handler.
@@ -234,6 +214,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		reply.Term = rf.currentTerm
 		reply.Success = false
+
 		for i := args.PrevLogIndex - 1; i >= 0; i-- {
 			if rf.log[i].Term != rf.log[args.PrevLogIndex].Term {
 				reply.FirstConflictingTermIndex = i + 1
@@ -244,6 +225,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
+	// If an existing entry conflicts with a new one (sameindex but different terms), delete the existing entry and all that follow it
 	if len(rf.log) > args.PrevLogIndex {
 		rf.log = rf.log[0 : args.PrevLogIndex+1]
 	}
@@ -295,6 +277,8 @@ func (rf *Raft) sendRequestVoteCaller(i int, currentTerm int, ch_reply chan Requ
 
 func (rf *Raft) sendAppendEntriesCaller(i int, currentTerm int, tmpNextIndex int) {
 	rf.mu.Lock()
+	lastIdx := len(rf.log)
+
 	args := AppendEntriesArgs{
 		currentTerm,
 		tmpNextIndex - 1,
@@ -314,7 +298,8 @@ func (rf *Raft) sendAppendEntriesCaller(i int, currentTerm int, tmpNextIndex int
 		return
 	}
 
-	if ok && reply.Success == false {
+	if ok && !reply.Success { // If AppendEntries fails because of log inconsistency: decrement nextIndex and retry
+		// rf.nextIndex[i] = tmpNextIndex - 1
 		if reply.FirstConflictingTermIndex != -1 {
 			rf.nextIndex[i] = reply.FirstConflictingTermIndex
 		} else {
@@ -324,8 +309,11 @@ func (rf *Raft) sendAppendEntriesCaller(i int, currentTerm int, tmpNextIndex int
 		return
 	}
 
-	if ok && reply.Success == true {
-		for rf.nextIndex[i] < len(rf.log) {
+	if ok && reply.Success {
+		// rf.nextIndex[i] = len(rf.log)
+		// rf.matchIndex[i] = len(rf.log)
+		// lastIdx = len(rf.log)
+		for rf.nextIndex[i] < lastIdx {
 			rf.logRevCount[rf.nextIndex[i]]++
 			if rf.nextIndex[i] > rf.commitIndex && float64(rf.logRevCount[rf.nextIndex[i]]) > float64(len(rf.peers))/2.0 && rf.log[rf.nextIndex[i]].Term == rf.currentTerm {
 				for rf.commitIndex < rf.nextIndex[i] {
@@ -506,6 +494,7 @@ func (rf *Raft) leaders() {
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// Your code here (2B).
 	rf.mu.Lock()
+
 	index := len(rf.log)
 	term := rf.currentTerm
 	isLeader := rf.isleader
@@ -516,10 +505,12 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	rf.logRevCount[len(rf.log)] = 1
+
 	newLogEntry := LogEntry{rf.currentTerm, command}
 	rf.log = append(rf.log, newLogEntry)
 
 	rf.mu.Unlock()
+
 	return index, term, isLeader
 }
 
