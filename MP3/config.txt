@@ -1,5 +1,5 @@
-A localhost 10001
-B localhost 10002
-C localhost 10003
-D localhost 10004
-E localhost 10005
+A sp23-cs425-6101.cs.illinois.edu 1234
+B sp23-cs425-6102.cs.illinois.edu 1234
+C sp23-cs425-6103.cs.illinois.edu 1234
+D sp23-cs425-6104.cs.illinois.edu 1234
+E sp23-cs425-6105.cs.illinois.edu 1234
