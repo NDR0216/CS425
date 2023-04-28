@@ -9,22 +9,22 @@ import (
 	"math"
 	"net"
 	"os"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
-	"strings"
-	"sort"
 )
 
 type ID struct {
 	Node_id string
-    Num int
+	Num     int
 }
 
 type TX struct {
-	Tx_id ID
-	Priority float64
-    Text string
+	Tx_id       ID
+	Priority    float64
+	Text        string
 	Deliverable bool
 	// Discarded bool
 	// Need_p_count int
@@ -32,7 +32,7 @@ type TX struct {
 
 type Message struct {
 	Message_id ID
-    Tx TX
+	Tx         TX
 }
 
 type PriorityQueue []*TX
@@ -61,15 +61,15 @@ func (pq *PriorityQueue) Pop() any {
 
 const ARG_NUM int = 2
 
-var n int // num of nodes in the cluster
+var n int     // num of nodes in the cluster
 var id string // current node
 var group []*gob.Encoder
 
 var mu_seq_num sync.Mutex
 var seq_num int // num of messages current node has sent
 var mu_received sync.Mutex
-var received map[ID]TX // msg received, m.ID: m.TX
-var delivered map[ID]bool // tx delivered, tx.ID: bool 
+var received map[ID]TX    // msg received, m.ID: m.TX
+var delivered map[ID]bool // tx delivered, tx.ID: bool
 var mu_pq sync.Mutex
 var pq PriorityQueue
 var max float64 // current max priority
@@ -79,9 +79,7 @@ var p_map_id map[int][]string
 
 var balance_map map[string]int
 
-
 var mu_failure sync.Mutex
-
 
 var wg sync.WaitGroup
 var err error
@@ -195,7 +193,7 @@ func handle_dead(dead_idx int) {
 			}
 		}
 	}
-	
+
 	mu_pq.Unlock()
 }
 
@@ -216,19 +214,17 @@ func handle_transaction(id string) {
 	for {
 		text, _ := reader.ReadString('\n')
 
-		priority := s*0.1
+		priority := s * 0.1
 
 		mu_pq.Lock()
 
 		integer, _ := math.Modf(max)
 		priority += integer + 1
 
-		
-
 		tx := TX{ID{id, tx_num}, priority, text[:len(text)-1], false}
 
 		go logger(tx)
-		
+
 		heap.Push(&pq, &tx)
 		p_map[tx_num] = append(p_map[tx_num], priority)
 		p_map_id[tx_num] = append(p_map_id[tx_num], id)
@@ -256,7 +252,7 @@ func handle_receive(conn net.Conn) {
 		if err != nil {
 			return // abort decode thread
 		}
-	
+
 		bDeliver(m)
 	}
 }
@@ -300,7 +296,7 @@ func bDeliver(m Message) {
 			defer bMulticast(m)
 		}
 	}
-	
+
 	mu_received.Unlock()
 }
 
@@ -313,7 +309,7 @@ func rDeliver(m Message) {
 	mu_pq.Lock()
 	// fmt.Println(m)
 	for i := range pq {
-		if pq[i].Tx_id == m.Tx.Tx_id {			
+		if pq[i].Tx_id == m.Tx.Tx_id {
 			if pq[i].Tx_id.Node_id == id && m.Message_id.Node_id != id { // self initiated transaction => waiting for proposed priority
 				// fmt.Println("get proposed")
 				p_map[pq[i].Tx_id.Num] = append(p_map[pq[i].Tx_id.Num], m.Tx.Priority)
@@ -325,7 +321,7 @@ func rDeliver(m Message) {
 
 					pq[i] = &pqi
 					heap.Fix(&pq, i)
-					
+
 					defer rMulticast(pqi)
 
 					for pq.Len() > 0 && pq[0].Deliverable == true {
@@ -333,7 +329,7 @@ func rDeliver(m Message) {
 						delivered[tmp.Tx_id] = true
 						balance(tmp)
 					}
-					
+
 				}
 
 				mu_pq.Unlock()
@@ -341,7 +337,7 @@ func rDeliver(m Message) {
 			} else if pq[i].Tx_id.Node_id != id && pq[i].Tx_id.Node_id == m.Message_id.Node_id { // not initiated, in queue => get final priority
 				// fmt.Println("get final")
 				pq[i] = &TX{pq[i].Tx_id, m.Tx.Priority, pq[i].Text, true}
-				
+
 				heap.Fix(&pq, i)
 
 				for pq.Len() > 0 && pq[0].Deliverable == true {
@@ -353,6 +349,23 @@ func rDeliver(m Message) {
 				mu_pq.Unlock()
 				return
 			} else { // first multicast, self-deliver just after generating a tx
+				if len(p_map[pq[i].Tx_id.Num]) >= n { // when get all proposed priorities
+					// fmt.Println("get all proposed")
+					pqi := TX{pq[i].Tx_id, max_priority(pq[i].Tx_id.Num), pq[i].Text, true}
+
+					pq[i] = &pqi
+					heap.Fix(&pq, i)
+
+					defer rMulticast(pqi)
+
+					for pq.Len() > 0 && pq[0].Deliverable == true {
+						tmp := *heap.Pop(&pq).(*TX)
+						delivered[tmp.Tx_id] = true
+						balance(tmp)
+					}
+
+				}
+
 				mu_pq.Unlock()
 				return
 			}
@@ -390,9 +403,9 @@ func rDeliver(m Message) {
 	mu_pq.Unlock()
 }
 
-func main()  {
+func main() {
 	argv := os.Args[1:]
-	if (len(argv) != ARG_NUM) {
+	if len(argv) != ARG_NUM {
 		fmt.Fprintf(os.Stderr, "usage: ./mp1_node <identifier> <configuration file>\n")
 		os.Exit(1)
 	}
@@ -407,7 +420,7 @@ func main()  {
 	id = argv[0]
 	config := argv[1]
 
-	f_logger, err = os.Create("log_"+id+".txt")
+	f_logger, err = os.Create("log_" + id + ".txt")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -419,10 +432,10 @@ func main()  {
 		log.Fatal(err)
 	}
 	defer file.Close()
-	
+
 	scanner := bufio.NewScanner(file)
 	scanner.Split(bufio.ScanWords)
-	
+
 	scanner.Scan()
 	n, err = strconv.Atoi(scanner.Text())
 	handle_err(err)
@@ -447,19 +460,19 @@ func main()  {
 	// tcp Dial
 	for i, v := range node_name {
 		if v == id {
-			ln, err = net.Listen("tcp", serv_addr[i] + ":" + serv_port[i])
+			ln, err = net.Listen("tcp", serv_addr[i]+":"+serv_port[i])
 			handle_err(err)
 		} else {
-			conn, err := net.Dial("tcp", serv_addr[i] + ":" + serv_port[i])
+			conn, err := net.Dial("tcp", serv_addr[i]+":"+serv_port[i])
 			for err != nil {
-				time.Sleep(1*time.Second)
-				conn, err = net.Dial("tcp", serv_addr[i] + ":" + serv_port[i])
+				time.Sleep(1 * time.Second)
+				conn, err = net.Dial("tcp", serv_addr[i]+":"+serv_port[i])
 			}
-			
+
 			enc := gob.NewEncoder(conn)
 			group = append(group, enc)
 			group_node_ids = append(group_node_ids, v)
-			
+
 		}
 	}
 
